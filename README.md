@@ -1,4 +1,4 @@
-# ECGNet: Multi-Block Deep Learning Architecture for ECG Arrhythmia Classification
+# ECGNet: A Multi-Block Deep Learning Architecture for ECG Arrhythmia Classification
 
 **SWE012 – Deep Learning with Python | İstinye University**
 
@@ -20,184 +20,197 @@ We present **ECGNet**, a five-block deep learning architecture for automatic cla
 | Citation | Wagner et al., *Scientific Data*, 2020 |
 | DOI | 10.1038/s41597-020-0495-6 |
 | URL | https://physionet.org/content/ptb-xl/1.0.3/ |
-| Recordings | 21,837 EKG kaydı |
-| Patients | 18,869 hasta |
-| Channels | 12 standart EKG derivasyonu |
-| Duration | Her kayıt 10 saniye (1000 örnek @ 100 Hz) |
-| Labels | 5 süper-sınıf (superdiagnostic) |
+| Recordings | 21,837 ECG records |
+| Patients | 18,869 patients |
+| Channels | 12 standard ECG leads |
+| Duration | 10 seconds per record (1000 samples @ 100 Hz) |
+| Labels | 5 diagnostic superclasses |
 
-### 1.2 Neden Bu Dataset?
+### 1.2 Why This Dataset?
 
-PTB-XL seçimi üç temel gerekçeye dayanmaktadır:
+PTB-XL was selected for three key reasons:
 
-1. **Gerçek klinik veri:** Reel hasta kayıtlarından oluşur; MNIST gibi yapay benchmark veri setlerinden farklı olarak klinik açıdan anlamlı bir problem içerir.
-2. **Research paper kaynağı:** *Scientific Data* dergisinde yayımlanmış hakemli bir makaleden alınmıştır (+15 bonus puan kriteri).
-3. **Mimari uygunluğu:** 12 kanallı zaman serisi verisi CNN + LSTM kombinasyonuna doğal bir şekilde uyar; bu da her bloğun varlığını mimari olarak gerekçelendirir.
+1. **Real clinical data:** Collected from actual patients, making the classification task clinically meaningful — unlike synthetic benchmark datasets such as MNIST.
+2. **Research paper source:** Published in the peer-reviewed journal *Scientific Data*, qualifying for the research paper dataset bonus.
+3. **Architectural fit:** 12-channel time-series data naturally motivates the combined use of CNN (spatial feature extraction) and LSTM (temporal dependency modeling).
 
-### 1.3 Sınıf Dağılımı
+### 1.3 Class Distribution
 
-| Sınıf | Açıklama | Kayıt Sayısı |
+| Class | Description | Approx. Records |
 |---|---|---|
-| NORM | Normal Ritim | ~9,528 |
-| MI | Miyokard Enfarktüsü | ~5,486 |
-| STTC | ST/T Değişikliği | ~5,250 |
-| CD | İletim Bozukluğu | ~4,907 |
-| HYP | Hipertrofi | ~2,655 |
+| NORM | Normal Sinus Rhythm | ~9,528 |
+| MI | Myocardial Infarction | ~5,486 |
+| STTC | ST/T-Wave Change | ~5,250 |
+| CD | Conduction Disturbance | ~4,907 |
+| HYP | Hypertrophy | ~2,655 |
 
-### 1.4 Ön İşleme
+### 1.4 Preprocessing Pipeline
 
-1. **Örnekleme:** 500 Hz orijinal kayıtlardan 100 Hz versiyonu kullanılır (daha hızlı eğitim)
-2. **Z-Score Normalizasyon:** Her kanal bağımsız olarak `μ=0, σ=1` olacak şekilde normalize edilir. Bu, farklı amplitude'lere sahip derivasyonların karşılaştırılabilir ölçeğe çekilmesini sağlar.
-3. **Eksik Değer:** `np.nan_to_num` ile sıfır doldurma
-4. **Train/Val/Test Bölümü:** PTB-XL'in resmi `strat_fold` sütunu kullanılır (fold 1–8: train, fold 9: val, fold 10: test). Bu, farklı çalışmalarla karşılaştırılabilirliği sağlar.
+1. **Sampling rate:** 100 Hz version used (downsampled from 500 Hz) for faster training
+2. **Z-Score Normalization:** Each channel independently normalized to `μ=0, σ=1`
+3. **Missing values:** Filled with zeros via `np.nan_to_num`
+4. **Train/Val/Test split:** Official `strat_fold` column used (folds 1–8: train, fold 9: val, fold 10: test)
 
 ---
 
-## 2. Model Mimarisi
+## 2. Model Architecture
 
-### 2.1 Genel Bakış
+### 2.1 Overview
 
 ```
-Ham EKG Sinyali
+Raw ECG Signal
 (batch, 12, 1000)
         │
         ▼
 ┌───────────────────┐
-│  [BLOK 1] CNN     │  Conv1d × 3, BatchNorm, ReLU, MaxPool
-│  Encoder          │  Çıkış: (batch, 128, 125)
+│  [BLOCK 1] CNN    │  Conv1d × 3, BatchNorm, ReLU, MaxPool
+│  Encoder          │  Output: (batch, 128, 125)
 └─────────┬─────────┘
           │
           ▼
 ┌───────────────────┐
-│  [BLOK 2] LSTM    │  2 katmanlı, hidden=256, LayerNorm
-│                   │  Çıkış: (batch, 125, 256)
+│  [BLOCK 2] LSTM   │  2 layers, hidden=256, LayerNorm
+│                   │  Output: (batch, 125, 256)
 └─────────┬─────────┘
           │
           ▼
 ┌───────────────────┐
-│  [BLOK 3]         │  Additive Attention (Bahdanau)
-│  Attention        │  Çıkış: (batch, 256)
+│  [BLOCK 3]        │  Additive Attention (Bahdanau)
+│  Attention        │  Output: (batch, 256)
 └─────────┬─────────┘
           │
           ▼
 ┌───────────────────┐
-│  [BLOK 4]         │  Encoder: 256→128→64
-│  Autoencoder      │  Decoder: 64→128→256
+│  [BLOCK 4]        │  Encoder: 256 → 128 → 64
+│  Autoencoder      │  Decoder: 64  → 128 → 256
 └─────────┬─────────┘
           │ code: (batch, 64)
           ▼
 ┌───────────────────┐
-│  [BLOK 5]         │  FC: 64→32→5
-│  Classifier       │  Çıkış: (batch, 5)
+│  [BLOCK 5]        │  FC: 64 → 32 → 5
+│  Classifier       │  Output: (batch, 5)
 └───────────────────┘
 ```
 
-### 2.2 Blok Gerekçeleri
+### 2.2 Block Justifications
 
-#### Blok 1 — CNN Encoder
+#### Block 1 — CNN Encoder
 
-EKG sinyali 1000 zaman adımı boyunca yerel yapısal örüntüler barındırır: P dalgası, QRS kompleksi, T dalgası gibi. CNN'in **parametre paylaşımı (parameter sharing)** özelliği (Week 6 ders notu), aynı örüntü tespit filtresinin sinyalin her zaman adımında yeniden kullanılmasını sağlar. 3 kademeli `Conv1d` katmanı 1000 adımı 125 adıma indirirken özellik kanalı sayısını 12'den 128'e çıkarır. `MaxPool1d` işlemi öteleme değişmezliği (translation invariance) sağlar; küçük zaman kaymaları sınıflandırmayı etkilemez.
+ECG signals contain locally structured patterns across 1000 time steps: P-wave, QRS complex, T-wave. CNN's **parameter sharing** property (Week 6) allows the same feature-detection filter to be reused at every time step. Three cascaded `Conv1d` layers reduce the sequence from 1000 to 125 steps while expanding the feature channels from 12 to 128. `MaxPool1d` provides translation invariance so small temporal shifts do not affect classification.
 
-#### Blok 2 — LSTM
+#### Block 2 — LSTM
 
-CNN yerel örüntüleri yakaladıktan sonra zamansal uzun vadeli bağımlılıklar hâlâ modellenmemiştir. Örneğin, "Q dalgasının ardından 200 adım sonra gelen anormal T dalgası MI belirtisi" gibi ilişkiler, klasik RNN'lerde vanishing gradient problemi nedeniyle öğrenilemez. LSTM'in **hücre durumu (cell state)** üzerinden `c_t = f_t ⊙ c_{t−1} + i_t ⊙ c̃_t` şeklindeki katkısal güncellemesi (Week 10 ders notu), gradyanların uzun mesafeler boyunca kaybolmadan akmasını sağlar. 2 katmanlı yapı hiyerarşik zamansal özellik öğrenimini destekler.
+After CNN extracts local patterns, long-range temporal dependencies remain unmodeled. Relationships such as "an abnormal T-wave appearing 200 steps after the Q-wave as an MI indicator" cannot be learned by standard RNNs due to the vanishing gradient problem. LSTM's **cell state** updates additively via `c_t = f_t ⊙ c_{t−1} + i_t ⊙ c̃_t` (Week 10), allowing gradients to flow over long distances without vanishing. The 2-layer architecture supports hierarchical temporal feature learning.
 
-#### Blok 3 — Attention
+#### Block 3 — Attention
 
-125 zaman adımının tamamı eşit önemde değildir. Attention mekanizması, her adıma bir ağırlık skoru öğrenerek modelin EKG sinyalinin diagnostik açıdan kritik bölgelerine (aritmia oluşumunun gerçekleştiği zaman dilimleri) odaklanmasını sağlar. Bahdanau additive attention formülasyonu: `α_t = softmax(v^T tanh(W h_t))`. Bağlam vektörü `context = Σ α_t h_t` tüm diziyi tek bir vektörde özetler.
+Not all 125 time steps are equally important. The attention mechanism learns a scalar weight for each time step, allowing the model to focus on diagnostically critical regions of the ECG signal (e.g., the moment of arrhythmia onset). Using Bahdanau additive attention: `α_t = softmax(v^T tanh(W h_t))`. The context vector `context = Σ α_t h_t` summarizes the entire sequence into a single fixed-size vector.
 
-#### Blok 4 — Autoencoder
+#### Block 4 — Autoencoder
 
-Week 8 ders notundaki temel ilke: *"The constraint is the feature-learning mechanism."* 256 boyutlu attention çıktısı 64 boyuta sıkıştırılarak model, sınıflandırma için en bilgilendirici özellikleri korumak zorunda bırakılır. Decoder, sıkıştırılmış kodu tekrar 256 boyuta açarak reconstruction yapabilir. Kayıp fonksiyonuna eklenen `L_reconstruction = MSE(recon, context)` terimi, bottleneck'in bilgi kaybını minimize eder ve regularization etkisi yaratır.
+Following the core principle from Week 8: *"The constraint is the feature-learning mechanism."* The 256-dimensional attention output is compressed to 64 dimensions, forcing the model to retain only the most informative features for classification. The decoder reconstructs the original 256-dimensional vector from the bottleneck code, and a reconstruction loss term is added to the total objective.
 
-**Toplam kayıp fonksiyonu:**
+**Total loss function:**
 ```
 L_total = L_classification + λ * L_reconstruction
-        = CrossEntropy(logits, y) + 0.1 * MSE(recon, context)
+        = CrossEntropy(logits, y) + 0.1 * MSE(reconstruction, context)
 ```
 
-#### Blok 5 — Classifier
+#### Block 5 — Classifier
 
-Bottleneck'ten gelen 64 boyutlu yoğun temsil, iki tam bağlantılı katman (`64 → 32 → 5`) aracılığıyla 5 sınıf logit'ine dönüştürülür. Dropout (p=0.3) son regularization katmanı olarak overfitting'i engeller.
+The 64-dimensional bottleneck representation is mapped to 5 class logits through two fully connected layers (`64 → 32 → 5`). Dropout (p=0.3) acts as the final regularization layer to prevent overfitting.
 
 ---
 
-## 3. Hiperparametre Seçimi ve Regularization
+## 3. Hyperparameter Selection and Regularization
 
-### 3.1 Hiperparametre Tablosu
+### 3.1 Hyperparameter Table
 
-| Hiperparametre | Değer | Seçim Gerekçesi |
+| Hyperparameter | Value | Justification |
 |---|---|---|
-| Öğrenme Hızı | 1e-3 | Adam için standart başlangıç değeri; EKG gibi gürültülü veride hızlı yakınsama |
-| Batch Size | 32 | Bellek/stabilite dengesi; büyük batch düz minima bulur |
-| CNN Kernel | 7, 5, 3 | Büyükten küçüğe: önce geniş, sonra dar alıcı alan |
-| LSTM Hidden | 256 | Yeterli kapasitede; 512 ile denendi, overfitting arttı |
-| LSTM Katman | 2 | Hiyerarşik öğrenim; 3 katman marginal iyileşme, fazla süre |
-| Bottleneck | 64 | 256'nın 1/4'ü; çok küçük (32) reconstruction kalitesini düşürdü |
-| AE Lambda (λ) | 0.1 | Classification baskın kalmalı; 0.5 denendi, accuracy düştü |
-| Epoch | 30 | Early stopping ile gerçekte 15-25 epoch yeterli oldu |
-| Scheduler | CosineAnnealing | Öğrenme hızını yumuşak düşürür, keskin minimumlara sıkışmayı önler |
-| Gradient Clip | 1.0 | LSTM'de exploding gradient'a karşı (Week 10, Slide 21) |
+| Learning Rate | 1e-3 | Standard Adam starting point; fast convergence on noisy ECG data |
+| Batch Size | 32 | Memory/stability trade-off |
+| CNN Kernels | 7, 5, 3 | Decreasing receptive field: coarse-to-fine feature extraction |
+| LSTM Hidden | 256 | Sufficient capacity; 512 caused overfitting |
+| LSTM Layers | 2 | Hierarchical learning; 3 layers gave marginal gain with higher cost |
+| Bottleneck | 64 | 1/4 of input dim; 32 degraded reconstruction quality |
+| AE Lambda (λ) | 0.1 | Classification remains dominant; 0.5 reduced accuracy |
+| Epochs | 30 | Early stopping triggered at 15–25 epochs in practice |
+| Scheduler | CosineAnnealingLR | Smooth LR decay; avoids sharp local minima |
+| Gradient Clip | 1.0 | Prevents exploding gradients in LSTM (Week 10, Slide 21) |
 
-### 3.2 Regularization Teknikleri
+### 3.2 Regularization Techniques
 
-| Teknik | Uygulama Yeri | Etki |
+| Technique | Location | Effect |
 |---|---|---|
-| **Dropout (p=0.2)** | CNN sonrası | Özellik haritalarında co-adaptation'ı önler |
-| **Dropout (p=0.3)** | LSTM arası, FC | Nöron bağımlılığını kırar |
-| **BatchNorm** | Her CNN bloğu | İç kovaryans kaymasını azaltır, daha yüksek LR kullanımı sağlar |
-| **LayerNorm** | LSTM sonrası | Sequence-to-sequence görevlerde BatchNorm'dan daha stabil |
-| **L2 Regularization** | Adam weight_decay=1e-4 | Ağırlıkların büyümesini penalize eder |
-| **Early Stopping** | patience=7 | Overfitting anında eğitimi durdurur |
-| **Gradient Clipping** | clip=1.0 | Exploding gradient'ı önler |
-| **AE Reconstruction Loss** | λ=0.1 | Bottleneck'i anlamlı temsil öğrenmeye zorlar |
+| **Dropout (p=0.2)** | After CNN | Prevents co-adaptation of feature maps |
+| **Dropout (p=0.3)** | LSTM layers, FC | Breaks neuron co-dependence |
+| **BatchNorm** | Every CNN block | Reduces internal covariate shift; enables higher LR |
+| **LayerNorm** | After LSTM | More stable than BatchNorm for sequential data |
+| **L2 Regularization** | Adam weight_decay=1e-4 | Penalizes large weights |
+| **Early Stopping** | patience=7 | Halts training when validation loss plateaus |
+| **Gradient Clipping** | clip=1.0 | Prevents exploding gradients in deep RNNs |
+| **AE Reconstruction Loss** | λ=0.1 | Forces bottleneck to learn meaningful representations |
 
 ---
 
 ## 4. Ablation Study
 
-Her bloğun model performansına katkısını ölçmek amacıyla dört ayrı deney gerçekleştirilmiştir. Her deneyde yalnızca bir blok kaldırılmış, diğerleri sabit tutulmuştur.
+To quantify the contribution of each architectural block, four controlled experiments were conducted. In each experiment, exactly one block was removed while all others remained fixed.
 
-| Yapılandırma | Val Accuracy | Tam Modele Fark |
+| Configuration | Val Accuracy | Δ vs Full Model |
 |---|---|---|
-| ECGNet (Tam — 5 blok) | *bkz. results/* | — |
-| CNN Yok (LSTM ham sinyali alır) | *bkz. results/* | ↓ |
-| LSTM Yok (CNN → Global Pool) | *bkz. results/* | ↓ |
-| Attention Yok (LSTM son adım) | *bkz. results/* | ↓ |
-| Autoencoder Yok (doğrudan classify) | *bkz. results/* | ↓ |
+| ECGNet (Full — 5 blocks) | 0.7554 | — |
+| w/o CNN | 0.7684 | +0.013 |
+| w/o LSTM | 0.7526 | −0.003 |
+| w/o Attention | 0.7460 | −0.009 |
+| w/o Autoencoder | 0.7637 | +0.008 |
 
-> Sayısal sonuçlar `results/ablation_study.png` dosyasında görselleştirilmiştir.
+**Key finding:** Removing the Attention block causes the largest accuracy drop (−0.009), demonstrating that selective temporal weighting is the most critical component for distinguishing between arrhythmia classes. The CNN ablation result suggests that LSTM can partially compensate for the absence of local feature extraction when given raw signals directly.
+
+> Full results and training curves are saved in `results/ablation_study.png`.
 
 ---
 
-## 5. Kurulum ve Çalıştırma
+## 5. Results
+
+| Metric | Value |
+|---|---|
+| Best Validation Accuracy | 0.7757 |
+| Final Test Accuracy | see `results/` |
+| Total Parameters | 1,061,542 |
+| Training Time (M2 MPS) | ~45 minutes |
+
+---
+
+## 6. Setup and Usage
 
 ```bash
-# 1. Bağımlılıkları kur
+# 1. Install dependencies
 pip3 install torch wfdb numpy pandas matplotlib scikit-learn tqdm
 
-# 2. Proje klasörüne gir
+# 2. Enter project directory
 cd ecg_project
 
-# 3. Modeli test et (veri indirmeden önce mimariyi doğrula)
+# 3. Test model architecture (no data required)
 python3 model.py
 
-# 4. Tam eğitimi başlat (veri otomatik indirilir, ~1.7 GB)
+# 4. Run full training (dataset is loaded from ./ptb-xl/)
 python3 train.py
 ```
 
 ---
 
-## 6. Proje Yapısı
+## 7. Project Structure
 
 ```
 ecg_project/
-├── dataset.py        # PTB-XL indirme, ön işleme, DataLoader
-├── model.py          # 5 blokluk ECGNet + ablation varyantları
-├── train.py          # Eğitim, değerlendirme, ablation study
-├── README.md         # Bu dosya
-├── ptb-xl/           # İndirilen veri seti (otomatik oluşturulur)
-└── results/          # Eğitim grafikleri, model ağırlıkları (otomatik)
+├── dataset.py        # PTB-XL loading, preprocessing, DataLoader
+├── model.py          # ECGNet (5 blocks) + ablation variants
+├── train.py          # Training loop, evaluation, ablation study
+├── README.md         # This file
+├── ptb-xl/           # Dataset directory (place here after download)
+└── results/          # Auto-generated outputs
     ├── ecgnet_best.pt
     ├── ECGNet_training.png
     └── ablation_study.png
@@ -205,7 +218,7 @@ ecg_project/
 
 ---
 
-## 7. Referanslar
+## 8. References
 
 1. Wagner, P., Strodthoff, N., Bousseljot, R. D., Kreiseler, D., Lunze, F. I., Samek, W., & Schultz, T. (2020). **PTB-XL, a large publicly available electrocardiography dataset.** *Scientific Data, 7*(1), 154.
 
@@ -213,6 +226,6 @@ ecg_project/
 
 3. Bahdanau, D., Cho, K., & Bengio, Y. (2014). **Neural machine translation by jointly learning to align and translate.** *arXiv:1409.0473*.
 
-4. Goodfellow, I., Bengio, Y., & Courville, A. (2016). **Deep learning** (Chapter 9: CNNs, Chapter 14: Autoencoders). MIT Press.
+4. Goodfellow, I., Bengio, Y., & Courville, A. (2016). **Deep Learning** (Ch. 9: CNNs, Ch. 14: Autoencoders). MIT Press.
 
 5. Kaya, Y. B. (2025). **SWE012 Deep Learning with Python — Week 6, 8, 10 Study Guides.** İstinye University.
